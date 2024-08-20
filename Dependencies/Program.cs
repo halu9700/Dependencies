@@ -788,6 +788,8 @@ namespace Dependencies
 
             PeDependencies Deps = new PeDependencies(Pe, customSearchFolders, recursion_depth);
             Printer(Deps.GetModules);
+            if (Directory.Exists(OutputDirectory))
+                CopyDependencies(Deps.GetModules);
         }
 
         public static void DumpUsage()
@@ -811,7 +813,7 @@ namespace Dependencies
                 "  -exports : dump <FILE> exports",
                 "  -modules : dump <FILE> resolved modules",
                 "  -chain : dump <FILE> whole dependency chain",
-                "  -search : custom search folders for modules"
+                "  -s -search : custom search folders for modules"
 
             );
 
@@ -826,11 +828,76 @@ namespace Dependencies
 			return PrettyPrinter;
 		}
 
+        public static void AddSearchFolder(string folder)
+        {
+            if (Directory.Exists(folder))
+            {
+                if (customSearchFolders.Contains(folder) == false)
+                    customSearchFolders.Add(folder);
+            }
+            else if (File.Exists(folder))
+            {
+                var libarayDirectorys = File.ReadAllLines(folder);
+                foreach (var directory in libarayDirectorys)
+                {
+                    if (Directory.Exists(directory) && customSearchFolders.Contains(directory) == false)
+                        customSearchFolders.Add(directory);
+                }
+            }
+            else
+            {
+                Console.Error.WriteLine("no such file or directory {0:s}", folder);
+            }
+        }
 
-		public delegate void DumpCommand(PE Application, Action<IPrettyPrintable> Printer, int recursion_depth=0);
+        public static bool SetOutputDirectory(string directory)
+        {
+            if (Directory.Exists(directory) == false)
+            {
+                Console.Error.WriteLine("[-] directory {0:s} does not exist", directory);
+                return false;
+            }
+            else
+            {
+                OutputDirectory = directory;
+                return true;
+            }
+        }
+        public static void CopyDependencies(ModuleEntries dependecies)
+        {
+            string name = "";
+            string path = "";
+            DateTime srcModifyTime;
+            DateTime dstModifyTime;
+            foreach (var key in dependecies.Keys)
+            {
+                name = key.Item1;
+                path = key.Item2;
+                PeDependencyItem pe = dependecies[key];
+                if (pe.SearchStrategy == ModuleSearchStrategy.NOT_FOUND || pe.SearchStrategy == ModuleSearchStrategy.ApiSetSchema || pe.SearchStrategy == ModuleSearchStrategy.WellKnownDlls)
+                    continue;
+                if (string.IsNullOrEmpty(path))
+                {
+                    Console.WriteLine("[-] libary {0:s} not found", name);
+                    continue;
+                }
+                if (File.Exists(Path.Combine(OutputDirectory, name)))
+                {
+                    srcModifyTime = File.GetLastWriteTime(path);
+                    dstModifyTime = File.GetLastWriteTime(Path.Combine(OutputDirectory, name));
+                    if (srcModifyTime <= dstModifyTime)
+                        continue;
+                }
+                File.Copy(path, Path.Combine(OutputDirectory, name), true);
+            }
+        }
+
+        public delegate void DumpCommand(PE Application, Action<IPrettyPrintable> Printer, int recursion_depth=0);
 
         public static List<string> customSearchFolders = new List<string>();
 
+        public static string OutputDirectory;
+        
         static void Main(string[] args)
 		{
 			// always the first call to make
@@ -842,13 +909,13 @@ namespace Dependencies
 			bool export_as_json = false;
 			bool use_bin_cache = false;
 			DumpCommand command = null;
-			OptionSet opts = new OptionSet() {
-							{ "h|help",  "show this message and exit", v => show_help = v != null },
-							{ "json",  "Export results in json format", v => export_as_json = v != null },
-							{ "cache",  "load and use binary cache to prevent dll file locking", v => use_bin_cache = v != null },
-							{ "d|depth=",  "limit recursion depth when analysing loaded modules or dependency chain. Default value is infinite", (int v) =>  recursion_depth = v },
-							{ "knowndll", "List all known dlls", v => { DumpKnownDlls(GetObjectPrinter(export_as_json));  early_exit = true; } },
-							{ "apisets", "List apisets redirections", v => { DumpApiSets(GetObjectPrinter(export_as_json));  early_exit = true; } },
+            OptionSet opts = new OptionSet() {
+                            { "h|help",  "show this message and exit", v => show_help = v != null },
+                            { "json",  "Export results in json format", v => export_as_json = v != null },
+                            { "cache",  "load and use binary cache to prevent dll file locking", v => use_bin_cache = v != null },
+                            { "d|depth=",  "limit recursion depth when analysing loaded modules or dependency chain. Default value is infinite", (int v) =>  recursion_depth = v },
+                            { "knowndll", "List all known dlls", v => { DumpKnownDlls(GetObjectPrinter(export_as_json));  early_exit = true; } },
+                            { "apisets", "List apisets redirections", v => { DumpApiSets(GetObjectPrinter(export_as_json));  early_exit = true; } },
                             { "apisetsdll", "List apisets redirections from apisetschema <FILE>", v => command = DumpApiSets },
                             { "manifest", "show manifest information embedded in <FILE>", v => command = DumpManifest },
                             { "sxsentries", "dump all of <FILE>'s sxs dependencies", v => command = DumpSxsEntries },
@@ -858,28 +925,16 @@ namespace Dependencies
                             { "modulerefs", "dump <FILE> modulerefs", v => command = DumpModuleReferences},
                             { "chain", "dump <FILE> whole dependency chain", v => command = DumpDependencyChain },
                             { "modules", "dump <FILE> resolved modules", v => command = DumpModules },
-                            { "s|search=", "custom search folders for modules", v => {
-                                if (Directory.Exists(v))
-                                    customSearchFolders.Add(v);
-                                else if (File.Exists(v))
-                                {
-                                    var libarayDirectorys = File.ReadAllLines(v);
-                                    foreach (var directory in libarayDirectorys)
-                                    {
-                                        if (Directory.Exists(directory))
-                                            customSearchFolders.Add(directory);
-                                    }
-                                }
-                                else
-                                {
-                                    Console.Error.WriteLine("no such file or directory {0:s}", v);
-                                }
-                            }}
-                            
-						};
+                            { "s|search=", "custom search folders for modules", v => AddSearchFolder(v) },
+                            { "o|output=", "copy dependencies to <DIRECTORY>", v => { if (!SetOutputDirectory(v)) early_exit = true; } },
 
-			List<string> eps = opts.Parse(args);
-            List<string> files = eps.Where(arg => !System.IO.Directory.Exists(arg)).ToList();
+            };
+            string workDirectory = Directory.GetCurrentDirectory();
+            if (File.Exists(Path.Combine(workDirectory, "Dependencies.txt")))
+                AddSearchFolder(Path.Combine(workDirectory, "Dependencies.txt"));
+
+            List<string> eps = opts.Parse(args);
+            List<string> files = eps.Where(arg => !Directory.Exists(arg)).ToList();
 			if (early_exit)
 				return;
 
@@ -916,7 +971,6 @@ namespace Dependencies
             }
 
             command(Pe, GetObjectPrinter(export_as_json), recursion_depth);
-            System.Console.ReadKey();
         }
     }
 }
