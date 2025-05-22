@@ -813,7 +813,8 @@ namespace Dependencies
                 "  -exports : dump <FILE> exports",
                 "  -modules : dump <FILE> resolved modules",
                 "  -chain : dump <FILE> whole dependency chain",
-                "  -s -search : custom search folders for modules"
+                "  -s -search : custom search folders for modules",
+                "  -o "
 
             );
 
@@ -854,17 +855,23 @@ namespace Dependencies
         {
             if (Directory.Exists(directory) == false)
             {
-                Console.Error.WriteLine("[-] directory {0:s} does not exist", directory);
-                return false;
+                Directory.CreateDirectory(directory);
             }
-            else
-            {
-                OutputDirectory = directory;
-                return true;
-            }
+            OutputDirectory = directory;
+            return true;
         }
+
+
         public static void CopyDependencies(ModuleEntries dependecies)
         {
+            if (Directory.Exists(OutputDirectory) == false)
+                Directory.CreateDirectory(OutputDirectory);
+
+            string[] msvcDllPrefix = new string[] {
+                "MSVCP", "VCRUNTIME", "VCOMP", "MSVCR", "MFC"
+            };
+            
+
             string name = "";
             string path = "";
             DateTime srcModifyTime;
@@ -876,11 +883,28 @@ namespace Dependencies
                 PeDependencyItem pe = dependecies[key];
                 if (pe.SearchStrategy == ModuleSearchStrategy.NOT_FOUND || pe.SearchStrategy == ModuleSearchStrategy.ApiSetSchema || pe.SearchStrategy == ModuleSearchStrategy.WellKnownDlls)
                     continue;
+                
                 if (string.IsNullOrEmpty(path))
                 {
                     Console.WriteLine("[-] libary {0:s} not found", name);
                     continue;
                 }
+
+                bool continueCopy = false;
+                if (pe.SearchStrategy == ModuleSearchStrategy.WindowsFolder)
+                {
+                    continueCopy = true;
+                    foreach (var prefix in msvcDllPrefix)
+                    {
+                        if (name.StartsWith(prefix))
+                        {
+                            continueCopy = false;
+                            break;
+                        }
+                    }
+                }
+                if (continueCopy)
+                    continue;
                 if (File.Exists(Path.Combine(OutputDirectory, name)))
                 {
                     srcModifyTime = File.GetLastWriteTime(path);
