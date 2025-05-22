@@ -814,7 +814,7 @@ namespace Dependencies
                 "  -modules : dump <FILE> resolved modules",
                 "  -chain : dump <FILE> whole dependency chain",
                 "  -s -search : custom search folders for modules",
-                "  -o "
+                "  -o -output : copy dependencies to <DIRECTORY>"
 
             );
 
